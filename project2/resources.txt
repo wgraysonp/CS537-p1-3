@@ -1,0 +1,1 @@
+I used geeksforgeeks.com for help with the c open function in this project. 95% of this code was written by me using only the instructions and the pre-existing xv6 code as resources. 
