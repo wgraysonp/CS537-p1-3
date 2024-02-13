@@ -12,6 +12,11 @@ typedef struct var{
 	int isHead;
 } VAR;
 
+typedef struct hist{
+	int length;
+	char **commands;
+} HISTORY;
+
 int wordCount(char* str){
 	char *ptr = str;
 	int count = 0;
@@ -35,6 +40,30 @@ int wordCount(char* str){
 	}
 	return count;
 }
+
+// convert string to integer
+int str2Int(char* str){
+	int len = strlen(str);
+	int strInt = 0;
+	for (int i = 0; i < len; i++){
+		if (str[i] - 48 < 0 || str[i] - 48 > 9){
+			return -1;
+		}
+
+		int dec = 1;
+		int j = 0;
+		while (j < len - i - 1){
+			dec = 10*dec;
+			j++;
+		}
+
+		strInt += (str[i]-48)*dec;
+	}
+
+	return strInt;
+}
+
+// functions for getting and editing variables
 
 char *getVar(VAR *head, char* varName){
 	VAR *curr = head;
@@ -102,6 +131,9 @@ void deleteVar(VAR **vars, char*varName){
 	} else {
 		curr->nextVar->prevVar = curr->prevVar;
 		curr->prevVar->nextVar = curr->nextVar;
+		if (curr->isHead == 1){
+			curr->nextVar->isHead = 1;
+		}
 		free(curr->contents);
 		free(curr->name);
 		free(curr);
@@ -126,7 +158,6 @@ void insertVar(VAR **vars, char* varName, char *varVal){
 		strcpy(head->name, varName);
 		head->contents = (char*)malloc((strlen(varVal)+1)*sizeof(char));
 		strcpy(head->contents, varVal);
-		printf("head contents: %s\n", head->contents);
 		head->nextVar = NULL;
 		head->prevVar = NULL;
 		head->isHead = 1;
@@ -163,6 +194,50 @@ void insertVar(VAR **vars, char* varName, char *varVal){
 	}
 	
 }
+
+// helper functions for history
+
+void historySet(HISTORY *hist, int length){
+
+	if (length == hist->length){
+		return;
+	} else {
+		hist->commands = (char**)realloc(hist->commands, length*sizeof(char*));
+		if (hist->commands == NULL){
+			printf("ERROR: Memory not allocated\n");
+			exit(1);
+		}
+		for (int i = hist->length; i<length; i++){
+			hist->commands[i] = NULL;
+		}
+		hist->length = length;
+	}
+}
+
+void updateHistory(HISTORY *hist, char* command){
+
+	int i = hist->length-1;
+	free(hist->commands[i]);
+	while (i > 0){
+		hist->commands[i] = hist->commands[i-1];
+		i--;
+	}
+	//free(hist->commands[0]);
+	hist->commands[0] = (char*)malloc((strlen(command) + 1)*sizeof(char));
+	strcpy(hist->commands[0], command);
+
+}
+
+void printHistory(HISTORY *hist){
+
+	int i = 0;
+	while (i < hist->length && hist->commands[i] != NULL){
+		printf("%d) %s\n", i+1, hist->commands[i]);
+		i++;
+	}
+}
+
+// main built-in functions
 
 void exitShell(int argCount){
 
@@ -259,6 +334,34 @@ void export(int argCount, char *args[]){
 	}
 }
 
+//TODO UPDATE TO ADD HISOTORICAL COMMAND EXECUTION
+void history(HISTORY *hist, int argCount, char *args[]){
+	if (argCount > 3){
+		printf("USAGE: history or history <n> or history set <n>\n");
+	} else if (argCount == 3){
+		if (strcmp(args[1], "set") != 0){
+			printf("USAGE: history or history <n> or history set <n>\n");	
+		} else {
+			int len = str2Int(args[2]);
+			if (len == -1){
+				printf("Invalid history length: %s. Must be a positive integer.\n", args[2]);
+			} else {
+				historySet(hist, len);
+			}
+		}
+	} else if (argCount == 2){
+		int len = str2Int(args[1]);
+		if (len == -1){
+			printf("Invalid command ");
+		} else {
+			// ADD CODE TO EXECUTE HISTORICAL COMMAND HERE
+		}
+	} else {
+		printHistory(hist);
+	}
+	
+}
+
 void printVars(VAR **vars){
 	VAR *curr = *vars;
 	while (curr != NULL){
@@ -285,7 +388,7 @@ void execCommand(char *args[]){
 
 }
 
-void parseCommand(VAR **vars, int argCount, char*args[]){
+void parseCommand(VAR **vars, HISTORY *hist, int argCount, char*args[]){
 
         if (strcmp(args[0], "exit") == 0){
         	exitShell(argCount);
@@ -297,6 +400,8 @@ void parseCommand(VAR **vars, int argCount, char*args[]){
 		printVars(vars);
 	} else if (strcmp(args[0], "export") == 0){
 		export(argCount, args);
+	} else if (strcmp(args[0], "history") == 0){
+		history(hist, argCount, args);
         } else {
                 execCommand(args);
         }
@@ -304,7 +409,14 @@ void parseCommand(VAR **vars, int argCount, char*args[]){
 
 void runInteractive(){
 	VAR *vars = NULL;
-	
+
+	HISTORY *hist = (HISTORY*)malloc(sizeof(HISTORY));
+	hist->length = 5;
+	hist->commands = (char**)malloc(5*sizeof(char*));
+	for (int i = 0; i < 5; i++){
+		hist->commands[i] = NULL;
+	}
+
 	while(1){
 		printf("wsh> ");
 		size_t buffsize = 256;
@@ -320,6 +432,8 @@ void runInteractive(){
 		if (buff[strlen(buff) - 1] == '\n'){
 			buff[strlen(buff) - 1] = '\0';
 		}
+
+		updateHistory(hist, buff);
 
 		int wc = wordCount(buff);
 
@@ -344,8 +458,8 @@ void runInteractive(){
 			exit(1);
 		}
 		
-        	free(buff);
-		parseCommand(&vars, wc, args);
+        free(buff);
+		parseCommand(&vars, hist,  wc, args);
 		free(args);
 	}
 
