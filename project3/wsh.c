@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <errno.h>
 
 typedef struct var{
 	char *name;
@@ -16,6 +17,12 @@ typedef struct hist{
 	int length;
 	char **commands;
 } HISTORY;
+
+typedef struct commands{
+	int numCommands;
+	int *argsPerCommand;
+	char ***commList;
+} COMMAND;
 
 int wordCount(char* str){
 	char *ptr = str;
@@ -374,21 +381,90 @@ void printVars(VAR **vars){
 	}
 }
 
-void execCommand(char *args[]){
 
+// resource: https://stackoverflow.com/questions/33884290/pipes-dup2-and-exec
+// this isnt working. 
+void runPipe(int infd, int totalCommands,  int currCommand,  char **pipeArgs[], int standardOut){
+		
+	if (currCommand + 1 == totalCommands){
+		if(dup2(infd, 0) == -1){
+			dprintf(standardOut, "ERROR: dup2() failed");
+			exit(1);
+		}
+		close(infd);
+		execvp(pipeArgs[currCommand][0], pipeArgs[currCommand]);
+		if (errno == 2){
+			dprintf(standardOut, "execvp: No such file or directory\n");
+		} else {
+			dprintf(standardOut, "ERROR: exec failed\n");
+		}
+		exit(1);
+	} else {
+
+		int newfd[2];
+		if (pipe(newfd) == -1){
+			printf("ERROR: pipe() failed");
+			exit(1);
+		}
+		
+		int rc = fork();
+
+		if (rc < 0){
+			dprintf(standardOut, "ERROR: fork failed\n");
+			exit(1);
+		} else if (rc == 0){
+			close(newfd[0]);
+			int dupOut;
+			if((dupOut = dup2(newfd[1], 1)) == -1){
+				dprintf(standardOut, "ERROR: dup2() failed in child");
+			}
+			if(dup2(infd, 0) == -1){
+						dprintf(standardOut, "ERROR: dup2() failed");
+						exit(1);
+			}
+			close(infd);
+			close(newfd[1]);
+			execvp(pipeArgs[currCommand][0], pipeArgs[currCommand]);
+			dprintf(standardOut, "ERROR: exec failed in child");
+			exit(1);
+		} else {
+			close(newfd[1]);
+			//close(infd);
+			wait(NULL);
+			runPipe(newfd[0], totalCommands, currCommand + 1, pipeArgs, standardOut);
+		}
+
+	}
+
+}
+
+//TODO: figure out the group pid thing
+
+void execCommand(int totalCommands, char **args[]){
+	fflush(0);
 	int rc = fork();
 	if (rc < 0){
 		printf("ERROR: fork failed\n");
 		exit(1);
 	} else if (rc == 0){
-		execvp(args[0], args);
+		//if total commands = 1
+		//execvp(args[0], args);
+		int standardOut = dup(1);
+		if (standardOut == -1){
+			printf("ERROR: dup() failed");
+		}
+		runPipe(0, totalCommands, 0, args, standardOut);
+		printf("ERROR: child return");
+		exit(1);
 	} else {
-		 wait(NULL);	
+		 wait(NULL);
 	}
 
 }
 
-void parseCommand(VAR **vars, HISTORY *hist, int argCount, char*args[]){
+void parseCommand(VAR **vars, HISTORY *hist, COMMAND *commands){
+	char **args = commands->commList[0];
+	int argCount = commands->argsPerCommand[0];
 
         if (strcmp(args[0], "exit") == 0){
         	exitShell(argCount);
@@ -403,8 +479,63 @@ void parseCommand(VAR **vars, HISTORY *hist, int argCount, char*args[]){
 	} else if (strcmp(args[0], "history") == 0){
 		history(hist, argCount, args);
         } else {
-                execCommand(args);
+                execCommand(commands->numCommands, commands->commList);
         }
+}
+
+COMMAND *parseArgs(char *buff){
+	int commandNum = 0;
+	char *ptr = buff;
+	while (*ptr != '\0'){
+		if (*ptr == '|'){
+			commandNum++;
+		}
+		ptr++;
+	}
+	commandNum++;
+	
+	// MAYBE CHECK FOR || or | at end of line
+	COMMAND *commands = (COMMAND*)malloc(sizeof(COMMAND));
+	commands->commList = NULL;
+	commands->argsPerCommand = NULL;
+
+	commands->numCommands = commandNum;
+	commands->commList = (char***)malloc(commandNum*sizeof(char**));
+	commands->argsPerCommand = (int*)malloc(commandNum*sizeof(int));
+
+	if (commands->argsPerCommand == NULL || commands->commList == NULL){
+		printf("ERROR: Memory not allocated.\n");
+		exit(1);
+	}
+
+	char *commandbuff = NULL;
+	int j = 0;
+
+	while((commandbuff = strsep(&buff, "|")) != NULL){
+		int wc = wordCount(commandbuff);
+		char *argsbuff = commandbuff;
+		if (wc == 0){
+			continue;
+		} else {
+			commands->commList[j] = NULL;
+			commands->commList[j]  = (char**)malloc((wc+1)*sizeof(char*));
+			int i = 0;
+			while((commands->commList[j][i] = strsep(&argsbuff, " ")) != NULL && i < wc){
+				if (commands->commList[j][i][0] == '\0'){
+					continue;
+				} else {
+					i++;
+				}
+
+			}
+			commands->argsPerCommand[j] = i;
+			commands->commList[j][i] = NULL;
+			j++;
+			
+		}
+	}
+
+	return commands;
 }
 
 void runInteractive(){
@@ -433,34 +564,23 @@ void runInteractive(){
 			buff[strlen(buff) - 1] = '\0';
 		}
 
+		char *buffcopy = buff;
 		updateHistory(hist, buff);
 
-		int wc = wordCount(buff);
 
-		if (wc == 0){
-			continue;
-		}
-		char **args = (char**)malloc((wc+1)*sizeof(char*));
-		int i = 0;
-		char delim = ' ';
-		while((args[i] = strsep(&buff, &delim)) != NULL && i < wc){
-			if (args[i][0] == ' '){
-				continue;
-			} else {
-				i++;
-			}
+		COMMAND *commands = parseArgs(buffcopy);
+
+		parseCommand(&vars, hist, commands);
+		free(buff);
+
+		for (int i = 0; i < commands->numCommands; i++){
+			free(commands->commList[i]);
 		}
 
-		args[i] = NULL;
-
-		if (buff != NULL){
-			printf("ERROR: args not fully parsed");
-			exit(1);
-		}
+		free(commands->argsPerCommand);
+		free(commands->commList);
 		
-        free(buff);
-		parseCommand(&vars, hist,  wc, args);
-		free(args);
+		free(commands);
 	}
 
 }
