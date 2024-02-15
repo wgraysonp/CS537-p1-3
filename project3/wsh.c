@@ -24,6 +24,9 @@ typedef struct commands{
 	char ***commList;
 } COMMAND;
 
+void parseCommand(VAR **vars, HISTORY *hist, COMMAND *commands);
+COMMAND *parseArgs(VAR *vars, char *buff);
+
 int wordCount(char* str){
 	char *ptr = str;
 	int count = 0;
@@ -101,8 +104,8 @@ void editVar(VAR **vars, char *varName, char *varVal){
 		}
 
 	}
-
-	curr->contents = varVal;
+	curr->contents = (char*)realloc(curr->contents, (strlen(varVal)+1)*sizeof(char));
+	strcpy(curr->contents, varVal);
 
 }
 
@@ -222,6 +225,11 @@ void historySet(HISTORY *hist, int length){
 }
 
 void updateHistory(HISTORY *hist, char* command){
+	if (hist->commands[0] != NULL){
+		if (strcmp(command, hist->commands[0]) == 0){
+			return;
+		}
+	}
 
 	int i = hist->length-1;
 	free(hist->commands[i]);
@@ -229,7 +237,6 @@ void updateHistory(HISTORY *hist, char* command){
 		hist->commands[i] = hist->commands[i-1];
 		i--;
 	}
-	//free(hist->commands[0]);
 	hist->commands[0] = (char*)malloc((strlen(command) + 1)*sizeof(char));
 	strcpy(hist->commands[0], command);
 
@@ -294,7 +301,7 @@ void local(VAR **vars, int argCount, char *args[]){
 
 	if (*varVal=='\0'){
 		deleteVar(vars, varName);
-	} else if(getVar(*vars, varName)!=NULL){
+	} else if(getVar(*vars, varName) != NULL){
 		editVar(vars, varName, varVal);
 	} else {
 		insertVar(vars, varName, varVal);
@@ -342,7 +349,7 @@ void export(int argCount, char *args[]){
 }
 
 //TODO UPDATE TO ADD HISOTORICAL COMMAND EXECUTION
-void history(HISTORY *hist, int argCount, char *args[]){
+void history(HISTORY *hist, VAR **vars,  int argCount, char *args[]){
 	if (argCount > 3){
 		printf("USAGE: history or history <n> or history set <n>\n");
 	} else if (argCount == 3){
@@ -357,10 +364,31 @@ void history(HISTORY *hist, int argCount, char *args[]){
 			}
 		}
 	} else if (argCount == 2){
-		int len = str2Int(args[1]);
-		if (len == -1){
-			printf("Invalid command ");
+		int commandNum = str2Int(args[1]);
+		if (commandNum < 1 || commandNum > hist->length){
+			return;
 		} else {
+			if (hist->commands[commandNum-1] == NULL){
+				return;
+			}
+			char *buff = NULL;
+			buff = (char*)malloc((strlen(hist->commands[commandNum-1]) + 1)*sizeof(char));
+			strcpy(buff, hist->commands[commandNum-1]);
+			char *buffcopy = buff;
+			
+                	COMMAND *commands = parseArgs(*vars, buffcopy);
+
+                	parseCommand(vars, hist, commands);
+                	free(buff);
+
+                	for (int i = 0; i < commands->numCommands; i++){
+                        	free(commands->commList[i]);
+                	}
+
+                	free(commands->argsPerCommand);
+                	free(commands->commList);
+
+                	free(commands);
 			// ADD CODE TO EXECUTE HISTORICAL COMMAND HERE
 		}
 	} else {
@@ -425,11 +453,14 @@ void runPipe(int infd, int totalCommands,  int currCommand,  char **pipeArgs[], 
 			close(infd);
 			close(newfd[1]);
 			execvp(pipeArgs[currCommand][0], pipeArgs[currCommand]);
-			dprintf(standardOut, "ERROR: exec failed in child");
+			if (errno == 2){
+                        	dprintf(standardOut, "execvp: No such file or directory\n");
+                	} else {
+                        	dprintf(standardOut, "ERROR: exec failed\n");
+               		}
 			exit(1);
 		} else {
 			close(newfd[1]);
-			//close(infd);
 			wait(NULL);
 			runPipe(newfd[0], totalCommands, currCommand + 1, pipeArgs, standardOut);
 		}
@@ -477,13 +508,13 @@ void parseCommand(VAR **vars, HISTORY *hist, COMMAND *commands){
 	} else if (strcmp(args[0], "export") == 0){
 		export(argCount, args);
 	} else if (strcmp(args[0], "history") == 0){
-		history(hist, argCount, args);
+		history(hist, vars, argCount, args);
         } else {
                 execCommand(commands->numCommands, commands->commList);
         }
 }
 
-COMMAND *parseArgs(char *buff){
+COMMAND *parseArgs(VAR *vars, char *buff){
 	int commandNum = 0;
 	char *ptr = buff;
 	while (*ptr != '\0'){
@@ -524,6 +555,15 @@ COMMAND *parseArgs(char *buff){
 				if (commands->commList[j][i][0] == '\0'){
 					continue;
 				} else {
+					if (commands->commList[j][i][0] == '$'){
+						commands->commList[j][i]++;
+						char *temp = getVar(vars, commands->commList[j][i]);
+						if (temp == NULL){
+							commands->commList[j][i][0] = '\0';
+						} else {
+							commands->commList[j][i] = temp;
+						}
+					}
 					i++;
 				}
 
@@ -565,12 +605,18 @@ void runInteractive(){
 		}
 
 		char *buffcopy = buff;
-		updateHistory(hist, buff);
+		char *histStr = (char*)malloc((strlen(buff) + 1)*sizeof(char));
+		strcpy(histStr, buff);
 
 
-		COMMAND *commands = parseArgs(buffcopy);
+		COMMAND *commands = parseArgs(vars, buffcopy);
 
 		parseCommand(&vars, hist, commands);
+
+		if (strcmp(buff, "history") != 0){
+			updateHistory(hist, histStr);
+		}
+		free(histStr);
 		free(buff);
 
 		for (int i = 0; i < commands->numCommands; i++){
