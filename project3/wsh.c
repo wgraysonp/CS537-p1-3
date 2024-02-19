@@ -639,34 +639,6 @@ void runInteractive(){
 
          runCommand(buff, &vars, hist);		
          free(buff);
-		// remove ending new line character
-		//if (buff[strlen(buff) - 1] == '\n'){
-		//	buff[strlen(buff) - 1] = '\0';
-		//}
-
-		//char *buffcopy = buff;
-		//char *histStr = (char*)malloc((strlen(buff) + 1)*sizeof(char));
-		//strcpy(histStr, buff);
-
-
-		//COMMAND *commands = parseArgs(vars, buffcopy);
-
-		//parseCommand(&vars, hist, commands, histStr);
-
-		//if (strcmp(buff, "history") != 0){
-		//	updateHistory(hist, histStr);
-		//}
-		//free(histStr);
-		//free(buff);
-
-		//for (int i = 0; i < commands->numCommands; i++){
-		//	free(commands->commList[i]);
-		//}
-
-		//free(commands->argsPerCommand);
-		//free(commands->commList);
-		
-		//free(commands);
 	}
 
 }
